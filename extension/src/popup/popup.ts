@@ -13,7 +13,20 @@ btnStart.addEventListener("click", async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const currentUrl = tab?.url || undefined;
 
-    const session = await createSession(currentUrl);
+    // Gather all browser cookies to forward to the server
+    const rawCookies = await chrome.cookies.getAll({});
+    const cookies = rawCookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path,
+      secure: c.secure,
+      httpOnly: c.httpOnly,
+      sameSite: c.sameSite === "no_restriction" ? "None" : c.sameSite === "lax" ? "Lax" : "Strict",
+      expires: c.expirationDate ?? -1,
+    }));
+
+    const session = await createSession(currentUrl, cookies);
 
     // Inject content script into active tab and open overlay
     const tabId = tab!.id!;

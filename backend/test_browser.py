@@ -15,18 +15,21 @@ async def main():
 
     print("Starting browser...")
     t = time.time()
-    session = BrowserSession(headless=False, keep_alive=True)
+    session = BrowserSession(headless=False, keep_alive=True, channel="chrome")
     await session.start()
     page = await session.get_current_page()
     await page.goto("https://www.google.com")
     print(f"Browser started in {time.time() - t:.1f}s\n")
 
     print("Enter instructions (or 'quit' to exit):\n")
+    loop = asyncio.get_event_loop()
 
     while True:
-        instruction = input("> ").strip()
-        if not instruction or instruction.lower() in ("quit", "exit", "q"):
+        instruction = (await loop.run_in_executor(None, input, "> ")).strip()
+        if instruction.lower() in ("quit", "exit", "q"):
             break
+        if not instruction:
+            continue
 
         print(f"Running: {instruction}")
         t = time.time()
@@ -50,7 +53,7 @@ async def main():
             print(f"{e}\n")
 
     print("Closing browser...")
-    await session.stop()
+    await session.kill()
 
 
 if __name__ == "__main__":

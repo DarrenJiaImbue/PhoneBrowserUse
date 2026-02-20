@@ -21,6 +21,9 @@ class Session:
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
 
+    # Cookies forwarded from the user's browser
+    cookies: list[dict] = field(default_factory=list)
+
     # Set when VAPI call connects
     vapi_call_id: str | None = None
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
+import tempfile
+from pathlib import Path
 
 import anthropic
 from browser_use import Agent, BrowserSession, ChatBrowserUse
@@ -10,6 +13,11 @@ from browser_use import Agent, BrowserSession, ChatBrowserUse
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Persistent profile directory — each user gets their own subdirectory
+# keyed by session code. Profiles survive server restarts so logins persist.
+PROFILES_DIR = Path(__file__).resolve().parent.parent.parent / "browser_profiles"
+PROFILES_DIR.mkdir(exist_ok=True)
 
 
 class BrowserService:
@@ -21,14 +29,67 @@ class BrowserService:
         self._anthropic = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         self._agent_task: asyncio.Task | None = None
         self._stopped = False
+        self._storage_state_path: str | None = None
 
-    async def start_browser(self, url: str = "https://www.google.com") -> None:
-        self._session = BrowserSession(headless=True, keep_alive=True)
+    async def start_browser(
+        self,
+        url: str = "https://www.google.com",
+        cookies: list[dict] | None = None,
+        profile_id: str | None = None,
+    ) -> None:
+        session_kwargs = {
+            "headless": True,
+            "keep_alive": True,
+            "channel": "chrome",
+        }
+
+        # Use a persistent profile so logins survive across sessions.
+        # Cookies from the extension are loaded into the profile on first use,
+        # then the profile itself maintains the login state going forward.
+        if profile_id:
+            profile_dir = PROFILES_DIR / profile_id
+            profile_dir.mkdir(exist_ok=True)
+            session_kwargs["user_data_dir"] = str(profile_dir)
+
+        if cookies:
+            self._storage_state_path = self._build_storage_state(cookies)
+            logger.info("Loaded %d cookies into storage state", len(cookies))
+            session_kwargs["storage_state"] = self._storage_state_path
+
+        self._session = BrowserSession(**session_kwargs)
         await self._session.start()
         # Open the requested page
         page = await self._session.get_current_page()
         await page.goto(url)
         logger.info("Browser started and navigated to %s", url)
+
+    @staticmethod
+    def _build_storage_state(cookies: list[dict]) -> str:
+        """Convert cookie dicts from the Chrome extension into a Playwright
+        storage_state JSON file and return its path."""
+        pw_cookies = []
+        for c in cookies:
+            pw_cookie = {
+                "name": c["name"],
+                "value": c["value"],
+                "domain": c["domain"],
+                "path": c.get("path", "/"),
+                "secure": c.get("secure", False),
+                "httpOnly": c.get("httpOnly", False),
+                "sameSite": c.get("sameSite", "Lax"),
+            }
+            expires = c.get("expires", -1)
+            if expires and expires > 0:
+                pw_cookie["expires"] = expires
+            pw_cookies.append(pw_cookie)
+
+        state = {"cookies": pw_cookies, "origins": []}
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, prefix="pbu_cookies_"
+        )
+        json.dump(state, tmp)
+        tmp.close()
+        return tmp.name
 
     async def execute_action(self, instruction: str) -> str:
         """Run a browser-use agent with a natural language instruction.
@@ -129,8 +190,23 @@ class BrowserService:
     async def close(self) -> None:
         await self.stop()
         if self._session:
-            # Use kill() for force shutdown — skips storage state saving
-            # and other watchdog operations that fail during teardown
-            await self._session.kill()
+            # Use stop() to allow StorageStateWatchdog to save cookies
+            # back to the persistent profile before shutdown.
+            try:
+                await self._session.stop()
+            except Exception:
+                # Fall back to kill() if graceful stop fails
+                try:
+                    await self._session.kill()
+                except Exception:
+                    pass
             self._session = None
             logger.info("Browser closed")
+        # Clean up temp cookie file
+        if self._storage_state_path:
+            import os
+            try:
+                os.unlink(self._storage_state_path)
+            except OSError:
+                pass
+            self._storage_state_path = None

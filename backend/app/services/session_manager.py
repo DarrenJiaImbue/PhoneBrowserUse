@@ -28,6 +28,13 @@ class SessionManager:
     def get_session(self, code: str) -> Session | None:
         return self._sessions.get(code)
 
+    def get_session_by_call_id(self, call_id: str) -> Session | None:
+        """Find an active session by its Vapi call ID."""
+        for session in self._sessions.values():
+            if session.vapi_call_id == call_id and session.state == SessionState.ACTIVE:
+                return session
+        return None
+
     def activate_session(self, code: str, vapi_call_id: str) -> Session | None:
         session = self._sessions.get(code)
         if session is None or session.state != SessionState.WAITING_FOR_CALL:

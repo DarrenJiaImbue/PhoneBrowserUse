@@ -14,6 +14,7 @@ session_manager = None
 async def create_session(request: SessionCreateRequest = SessionCreateRequest()):
     session = session_manager.create_session()
     session.start_url = request.url
+    session.cookies = [c.model_dump() for c in request.cookies]
     return SessionCreateResponse(
         code=session.code,
         phone_number=settings.vapi_phone_number,
