@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-02-24T22:36:21.428004+00:00",
+  "results": [
+    {
+      "framework": "browser-use",
+      "mode": "-",
+      "name": "bu-sonnet",
+      "model": "claude-sonnet-4-6",
+      "startup_s": 3.96,
+      "action_s": 108.17,
+      "result_text": "I've successfully completed the task up to the login step. Here's what I did:\n\n1. \u2705 Navigated to Polymarket.com\n2. \u2705 Clicked on the **Politics** section in the navigation bar\n3. \u2705 Clicked on the first market: **\"US strikes Iran by...?\"** (a Geopolitics/Middle East market)\n4. \u2705 Set the bet amount to **$100** (buying \"Yes\" at 2.4\u00a2, with a potential win of **$4,166.67**)\n5. \u2705 Clicked the **Trade** button \u2014 this triggered the **\"Welcome to Polymarket\"** login/authentication modal\n\n**Stopped at login as requested.** The authentication dialog is now showing with options to:\n- Continue with Google\n- Enter an email address\n- Connect a wallet (MetaMask, Coinbase, Ghost, or WalletConnect)\n\nTo complete the bet, you would need to log in or create an account.",
+      "success": true,
+      "error": null
+    },
+    {
+      "framework": "stagehand",
+      "mode": "dom",
+      "name": "sh-dom-claude-sonnet",
+      "model": "claude-sonnet",
+      "startup_s": 2.08,
+      "action_s": 157.89,
+      "result_text": "The task was successfully completed up to the login wall. The steps taken were: 1) Navigated to polymarket.com, 2) Clicked on the \"Politics\" section in the navigation, 3) Identified the first market in the Politics section: \"US strikes Iran by...?\", 4) Clicked on the market to open it, 5) Set the bet amount to $100 using the \"+$100\" button, 6) Clicked the \"Trade\" button, which triggered a \"Welcome to Polymarket\" login modal requiring authentication. The task was stopped at the login screen as instructed, fulfilling all requirements of the task.",
+      "success": true,
+      "error": null
+    },
+    {
+      "framework": "stagehand",
+      "mode": "cua",
+      "name": "sh-cua-claude-sonnet",
+      "model": "claude-sonnet",
+      "startup_s": 2.41,
+      "action_s": 0.0,
+      "result_text": "",
+      "success": false,
+      "error": "UnprocessableEntityError: Error code: 422 - {'success': False, 'message': 'CuaModelRequiredError: To use the computer use agent (CUA), please provide a CUA model in the agent constructor or stagehand config. Try one of our supported CUA models: openai/computer-use-preview, openai/computer-use-preview-2025-03-11, anthropic/claude-3-7-sonnet-latest, anthropic/claude-opus-4-5-20251101, anthropic/claude-opus-4-6, anthropic/claude-haiku-4-5-20251001, anthropic/claude-sonnet-4-20250514, anthropic/claude-sonnet-4-5-20250929, google/gemini-2.5-computer-use-preview-10-2025, google/gemini-3-flash-preview, google/gemini-3-pro-preview, microsoft/fara-7b'}\nTraceback (most recent call last):\n  File \"/Users/darrenjia/PhoneBrowserUse/backend/benchmarks/bench_stagehand.py\", line 84, in run_stagehand\n    exec_resp = await client.sessions.execute(\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<13 lines>...\n    )\n    ^\n  File \"/Users/darrenjia/PhoneBrowserUse/backend/.venv/lib/python3.13/site-packages/stagehand/resources/sessions.py\", line 1383, in execute\n    return await self._post(\n           ^^^^^^^^^^^^^^^^^\n    ...<19 lines>...\n    )\n    ^\n  File \"/Users/darrenjia/PhoneBrowserUse/backend/.venv/lib/python3.13/site-packages/stagehand/_base_client.py\", line 1849, in post\n    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/darrenjia/PhoneBrowserUse/backend/.venv/lib/python3.13/site-packages/stagehand/_base_client.py\", line 1648, in request\n    raise self._make_status_error_from_response(err.response) from None\nstagehand.UnprocessableEntityError: Error code: 422 - {'success': False, 'message': 'CuaModelRequiredError: To use the computer use agent (CUA), please provide a CUA model in the agent constructor or stagehand config. Try one of our supported CUA models: openai/computer-use-preview, openai/computer-use-preview-2025-03-11, anthropic/claude-3-7-sonnet-latest, anthropic/claude-opus-4-5-20251101, anthropic/claude-opus-4-6, anthropic/claude-haiku-4-5-20251001, anthropic/claude-sonnet-4-20250514, anthropic/claude-sonnet-4-5-20250929, google/gemini-2.5-computer-use-preview-10-2025, google/gemini-3-flash-preview, google/gemini-3-pro-preview, microsoft/fara-7b'}\n"
+    }
+  ]
+}

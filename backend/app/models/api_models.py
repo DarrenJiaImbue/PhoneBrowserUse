@@ -1,20 +1,9 @@
 from pydantic import BaseModel
 
 
-class CookieData(BaseModel):
-    name: str
-    value: str
-    domain: str
-    path: str = "/"
-    secure: bool = False
-    httpOnly: bool = False
-    sameSite: str = "Lax"
-    expires: float = -1
-
-
 class SessionCreateRequest(BaseModel):
     url: str = "https://www.google.com"
-    cookies: list[CookieData] = []
+    profile_id: str | None = None
 
 
 class SessionCreateResponse(BaseModel):

@@ -1,27 +1,16 @@
 import { SERVER_URL } from "./constants";
 import type { SessionCreateResponse, SessionStatusResponse } from "./types";
 
-export interface CookieData {
-  name: string;
-  value: string;
-  domain: string;
-  path: string;
-  secure: boolean;
-  httpOnly: boolean;
-  sameSite: string;
-  expires: number;
-}
-
 export async function createSession(
   url?: string,
-  cookies?: CookieData[]
+  profileId?: string
 ): Promise<SessionCreateResponse> {
   const res = await fetch(`${SERVER_URL}/api/session/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       url: url ?? "https://www.google.com",
-      cookies: cookies ?? [],
+      profile_id: profileId,
     }),
   });
   if (!res.ok) {
@@ -38,4 +27,8 @@ export async function getSessionStatus(
     throw new Error(`Failed to get session status: ${res.status}`);
   }
   return res.json();
+}
+
+export async function endSession(code: string): Promise<void> {
+  await fetch(`${SERVER_URL}/api/session/${code}/end`, { method: "POST" });
 }

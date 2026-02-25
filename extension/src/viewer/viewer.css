@@ -4,19 +4,22 @@
   box-sizing: border-box;
 }
 
+html, body {
+  height: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 20px;
   line-height: 1.5;
   color: #1a1a1a;
   background: #ffffff;
-  min-height: 100%;
 }
 
 /* Screen management */
 .screen {
   display: none;
-  min-height: 100%;
+  height: 100%;
 }
 
 .screen.active {
@@ -146,7 +149,7 @@ h1 {
 /* Live view */
 .live-container {
   width: 100%;
-  min-height: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -174,10 +177,10 @@ h1 {
   50% { opacity: 0.4; }
 }
 
-#screenshot {
+#live-frame {
   width: 100%;
   flex: 1;
-  object-fit: contain;
+  border: none;
   background: #f0f0f0;
 }
 

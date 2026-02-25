@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 
@@ -52,14 +51,6 @@ class SessionManager:
 
         session.state = SessionState.ENDED
         logger.info("Session ending: %s", code)
-
-        # Cancel screenshot streaming first so it doesn't try to use a closing browser
-        if session.screenshot_task and not session.screenshot_task.done():
-            session.screenshot_task.cancel()
-            try:
-                await session.screenshot_task
-            except asyncio.CancelledError:
-                pass
 
         # Close browser (this also cancels any running agent task)
         if session.browser_service:

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from fastapi import APIRouter, Request
 
 from app.services.browser_service import BrowserService
 from app.services.screenshot_streamer import (
+    send_live_url,
     send_session_ended,
     send_status,
-    stream_screenshots,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,25 +93,22 @@ async def _validate_code(args: dict, message: dict) -> str:
     if session is None:
         return "That code is not valid or has already been used. Please ask the user to check their screen and try again."
 
-    # Start browser on the session's start URL, with user's cookies if provided.
-    # Each session code gets a persistent browser profile so logins survive.
+    # Start cloud browser on the session's start URL with persistent profile.
+    logger.info(">>> Session %s has profile_id=%s", code, session.profile_id)
     browser_svc = BrowserService()
-    await browser_svc.start_browser(
-        session.start_url,
-        cookies=session.cookies,
-        profile_id=code,
-    )
+    await browser_svc.start_browser(session.start_url, profile_id=session.profile_id)
     session.browser_service = browser_svc
 
-    # Start screenshot streaming if WebSocket is connected
+    # Send live viewer URL to extension via WebSocket
     if session.websocket:
         await send_status(session.websocket, "active")
-        session.screenshot_task = asyncio.create_task(
-            stream_screenshots(browser_svc, session.websocket, code)
-        )
-        logger.info("Screenshot streaming task created for session %s", code)
+        if browser_svc.live_url:
+            await send_live_url(session.websocket, browser_svc.live_url)
+            logger.info("Live URL sent to extension for session %s", code)
+        else:
+            logger.warning("No live URL available for session %s", code)
     else:
-        logger.warning("No WebSocket connected for session %s, skipping screenshots", code)
+        logger.warning("No WebSocket connected for session %s", code)
 
     return (
         "Code verified successfully! I can now see a browser with Google open. "

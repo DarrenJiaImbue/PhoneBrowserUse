@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -21,8 +20,8 @@ class Session:
     created_at: float = field(default_factory=time.time)
     last_activity: float = field(default_factory=time.time)
 
-    # Cookies forwarded from the user's browser
-    cookies: list[dict] = field(default_factory=list)
+    # Cloud browser profile ID for persistent logins across sessions
+    profile_id: str | None = None
 
     # Set when VAPI call connects
     vapi_call_id: str | None = None
@@ -32,9 +31,6 @@ class Session:
 
     # WebSocket connection for the extension
     websocket: Any = None
-
-    # Screenshot streaming task
-    screenshot_task: asyncio.Task | None = None
 
     def touch(self) -> None:
         self.last_activity = time.time()

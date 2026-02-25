@@ -33,7 +33,13 @@ if (!(window as any).__pbu_content_loaded) {
       display: flex;
       align-items: center;
       justify-content: center;
+      overflow: hidden;
+      overscroll-behavior: contain;
     `;
+
+    // Prevent scroll/wheel events from reaching the page underneath
+    overlay.addEventListener("wheel", (e) => e.preventDefault(), { passive: false });
+    overlay.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
 
     const iframe = document.createElement("iframe");
     const viewerUrl = chrome.runtime.getURL(
@@ -48,9 +54,10 @@ if (!(window as any).__pbu_content_loaded) {
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     `;
 
-    // Close overlay when clicking the backdrop
+    // Close overlay when clicking the backdrop — tell the viewer to clean up first
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) {
+        iframe.contentWindow?.postMessage({ action: "pbu_cleanup" }, "*");
         removeOverlay();
       }
     });

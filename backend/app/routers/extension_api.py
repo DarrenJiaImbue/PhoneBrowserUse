@@ -14,7 +14,7 @@ session_manager = None
 async def create_session(request: SessionCreateRequest = SessionCreateRequest()):
     session = session_manager.create_session()
     session.start_url = request.url
-    session.cookies = [c.model_dump() for c in request.cookies]
+    session.profile_id = request.profile_id
     return SessionCreateResponse(
         code=session.code,
         phone_number=settings.vapi_phone_number,
@@ -31,3 +31,12 @@ async def get_session_status(code: str):
         code=session.code,
         state=session.state.value,
     )
+
+
+@router.post("/{code}/end")
+async def end_session(code: str):
+    session = session_manager.get_session(code)
+    if session is None:
+        return {"ok": True}  # already gone, that's fine
+    await session_manager.end_session(code)
+    return {"ok": True}

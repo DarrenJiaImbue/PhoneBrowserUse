@@ -1,4 +1,5 @@
-import { createSession } from "../shared/api";
+import { createSession, endSession } from "../shared/api";
+import { getOrCreateProfileId } from "../shared/profile";
 import { WebSocketManager } from "../shared/websocket";
 import type { WsMessage } from "../shared/types";
 
@@ -12,7 +13,7 @@ const screens = {
 const sessionCodeEl = document.getElementById("session-code")!;
 const phoneNumberEl = document.getElementById("phone-number")!;
 const connectionStatusEl = document.getElementById("connection-status")!;
-const screenshotEl = document.getElementById("screenshot") as HTMLImageElement;
+const liveFrameEl = document.getElementById("live-frame") as HTMLIFrameElement;
 const btnNewSession = document.getElementById("btn-new-session")!;
 const errorBanner = document.getElementById("error-banner")!;
 const errorText = document.getElementById("error-text")!;
@@ -24,13 +25,41 @@ if (window.parent !== window) {
   document.body.classList.add("in-iframe");
 }
 
+// Track current session code for cleanup
+let currentCode: string | null = null;
+
+async function cleanupAndClose(): Promise<void> {
+  if (currentCode) {
+    endSession(currentCode).catch(() => {});
+    currentCode = null;
+  }
+  if (wsManager) {
+    wsManager.close();
+    wsManager = null;
+  }
+  liveFrameEl.src = "";
+  window.parent.postMessage({ action: "pbu_close_overlay" }, "*");
+}
+
 // Close overlay button
 const btnCloseOverlay = document.getElementById("btn-close-overlay");
 if (btnCloseOverlay) {
-  btnCloseOverlay.addEventListener("click", () => {
-    window.parent.postMessage({ action: "pbu_close_overlay" }, "*");
-  });
+  btnCloseOverlay.addEventListener("click", () => cleanupAndClose());
 }
+
+// Listen for cleanup request from parent (backdrop click)
+window.addEventListener("message", (event) => {
+  if (event.data?.action === "pbu_cleanup") {
+    if (currentCode) {
+      endSession(currentCode).catch(() => {});
+      currentCode = null;
+    }
+    if (wsManager) {
+      wsManager.close();
+      wsManager = null;
+    }
+  }
+});
 
 function showScreen(name: keyof typeof screens): void {
   Object.values(screens).forEach((el) => el.classList.remove("active"));
@@ -53,9 +82,9 @@ function formatPhoneNumber(phone: string): string {
 
 function handleWsMessage(msg: WsMessage): void {
   switch (msg.type) {
-    case "screenshot":
-      if (msg.data) {
-        screenshotEl.src = `data:image/jpeg;base64,${msg.data}`;
+    case "live_url":
+      if (msg.url) {
+        liveFrameEl.src = msg.url;
         if (!screens.live.classList.contains("active")) {
           showScreen("live");
         }
@@ -71,10 +100,15 @@ function handleWsMessage(msg: WsMessage): void {
 
     case "session_ended":
       showScreen("ended");
+      liveFrameEl.src = "";
       if (wsManager) {
         wsManager.close();
         wsManager = null;
       }
+      break;
+
+    case "screenshot":
+      // Legacy fallback — ignored now that we use live URL
       break;
 
     case "pong":
@@ -92,6 +126,8 @@ const code = params.get("code");
 const phone = params.get("phone");
 
 if (code && phone) {
+  currentCode = code;
+
   // Show instructions immediately with the provided code/phone
   sessionCodeEl.textContent = code;
   phoneNumberEl.textContent = formatPhoneNumber(phone);
@@ -106,14 +142,21 @@ if (code && phone) {
 
 // "Start New Session" button — re-open the popup isn't possible, so create a new session directly
 btnNewSession.addEventListener("click", async () => {
+  // Clean up old session
+  if (currentCode) {
+    endSession(currentCode).catch(() => {});
+    currentCode = null;
+  }
   if (wsManager) {
     wsManager.close();
     wsManager = null;
   }
 
   try {
-    const session = await createSession();
+    const profileId = await getOrCreateProfileId();
+    const session = await createSession(undefined, profileId);
 
+    currentCode = session.code;
     sessionCodeEl.textContent = session.code;
     phoneNumberEl.textContent = formatPhoneNumber(session.phone_number);
     showScreen("instructions");

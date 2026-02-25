@@ -4,107 +4,187 @@ import asyncio
 import base64
 import json
 import logging
-import tempfile
+import os
 from pathlib import Path
 
 import anthropic
+import httpx
 from browser_use import Agent, BrowserSession, ChatBrowserUse
+from browser_use.browser.cloud.cloud import CloudBrowserClient
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Persistent profile directory — each user gets their own subdirectory
-# keyed by session code. Profiles survive server restarts so logins persist.
-PROFILES_DIR = Path(__file__).resolve().parent.parent.parent / "browser_profiles"
-PROFILES_DIR.mkdir(exist_ok=True)
+# Monkey-patch: browser-use SDK serializes profile_id (snake_case) but the
+# cloud API expects profileId (camelCase).  Pydantic's extra='forbid' prevents
+# patching model_dump on instances, so we patch the class method instead.
+_FIELD_REMAP = {
+    "profile_id": "profileId",
+    "cloud_profile_id": "profileId",
+    "proxy_country_code": "proxyCountryCode",
+    "cloud_proxy_country_code": "proxyCountryCode",
+}
+
+from browser_use.browser.cloud.views import CreateBrowserRequest
+
+_original_model_dump = CreateBrowserRequest.model_dump
+
+
+def _patched_model_dump(self, **kwargs):
+    data = _original_model_dump(self, **kwargs)
+    remapped = {_FIELD_REMAP.get(k, k): v for k, v in data.items()}
+    # Strip None values so the API doesn't receive null for unset cloud params
+    if kwargs.get("exclude_unset") or kwargs.get("exclude_none"):
+        remapped = {k: v for k, v in remapped.items() if v is not None}
+    return remapped
+
+
+CreateBrowserRequest.model_dump = _patched_model_dump
+
+# Maps extension-generated UUIDs → browser-use cloud profile IDs.
+# Persisted to disk so mappings survive server restarts.
+_PROFILE_MAP_PATH = Path(__file__).resolve().parent.parent.parent / "cloud_profiles.json"
+
+_BU_API = "https://api.browser-use.com/api/v2"
+
+
+def _get_api_key() -> str:
+    return settings.browser_use_api_key or os.environ.get("BROWSER_USE_API_KEY", "")
+
+
+def _load_profile_map() -> dict[str, str]:
+    if _PROFILE_MAP_PATH.exists():
+        return json.loads(_PROFILE_MAP_PATH.read_text())
+    return {}
+
+
+def _save_profile_map(m: dict[str, str]) -> None:
+    _PROFILE_MAP_PATH.write_text(json.dumps(m, indent=2))
+
+
+async def _ensure_cloud_profile(local_id: str) -> str:
+    """Return the browser-use cloud profile ID for a local extension ID.
+
+    Creates a new cloud profile on first encounter and caches the mapping.
+    """
+    profile_map = _load_profile_map()
+    if local_id in profile_map:
+        cloud_id = profile_map[local_id]
+        logger.info(">>> PROFILE REUSE: local=%s -> cloud=%s", local_id, cloud_id)
+        return cloud_id
+
+    # Create a new profile on browser-use cloud
+    api_key = _get_api_key()
+    async with httpx.AsyncClient() as http:
+        resp = await http.post(
+            f"{_BU_API}/profiles",
+            headers={"X-Browser-Use-API-Key": api_key},
+            json={"name": f"pbu-{local_id[:8]}"},
+        )
+        resp.raise_for_status()
+        cloud_profile_id = resp.json()["id"]
+
+    profile_map[local_id] = cloud_profile_id
+    _save_profile_map(profile_map)
+    logger.info(
+        "Created cloud profile %s for local ID %s", cloud_profile_id, local_id
+    )
+    return cloud_profile_id
 
 
 class BrowserService:
-    """Wraps browser-use library for browser automation with BU 2.0."""
+    """Wraps browser-use library for browser automation with BU 2.0.
+
+    Uses browser-use cloud mode so both the browser and orchestration
+    run on browser-use's servers — no local CDP round-trips.
+    """
 
     def __init__(self) -> None:
         self._session: BrowserSession | None = None
         self._llm = ChatBrowserUse(model="bu-2-0")
         self._anthropic = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self._agent: Agent | None = None
         self._agent_task: asyncio.Task | None = None
         self._stopped = False
-        self._storage_state_path: str | None = None
+        self._live_url: str | None = None
+
+    @property
+    def live_url(self) -> str | None:
+        return self._live_url
 
     async def start_browser(
         self,
         url: str = "https://www.google.com",
-        cookies: list[dict] | None = None,
         profile_id: str | None = None,
     ) -> None:
-        session_kwargs = {
-            "headless": True,
+        """Start a cloud browser session and navigate to the URL.
+
+        If profile_id is provided, browser-use cloud will restore cookies
+        and login state from a previous session with the same profile.
+        """
+        session_kwargs: dict = {
+            "use_cloud": True,
             "keep_alive": True,
-            "channel": "chrome",
+            "args": ["--homepage=https://www.google.com", "--new-tab-page=https://www.google.com"],
         }
-
-        # Use a persistent profile so logins survive across sessions.
-        # Cookies from the extension are loaded into the profile on first use,
-        # then the profile itself maintains the login state going forward.
         if profile_id:
-            profile_dir = PROFILES_DIR / profile_id
-            profile_dir.mkdir(exist_ok=True)
-            session_kwargs["user_data_dir"] = str(profile_dir)
-
-        if cookies:
-            self._storage_state_path = self._build_storage_state(cookies)
-            logger.info("Loaded %d cookies into storage state", len(cookies))
-            session_kwargs["storage_state"] = self._storage_state_path
-
+            cloud_id = await _ensure_cloud_profile(profile_id)
+            session_kwargs["cloud_profile_id"] = cloud_id
+            logger.info(">>> STARTING BROWSER with cloud_profile_id=%s (local=%s)", cloud_id, profile_id)
+        else:
+            logger.info(">>> STARTING BROWSER with NO profile (profile_id was None)")
+        logger.info(">>> BrowserSession kwargs: %s", {k: v for k, v in session_kwargs.items() if k != "args"})
         self._session = BrowserSession(**session_kwargs)
         await self._session.start()
-        # Open the requested page
+
+        # Fetch the live viewer URL from browser-use cloud API
+        try:
+            cloud_session_id = self._session._cloud_browser_client.current_session_id
+            if cloud_session_id:
+                api_key = _get_api_key()
+                async with httpx.AsyncClient() as http:
+                    resp = await http.get(
+                        f"https://api.browser-use.com/api/v2/browsers/{cloud_session_id}",
+                        headers={"X-Browser-Use-API-Key": api_key},
+                    )
+                    if resp.is_success:
+                        data = resp.json()
+                        self._live_url = data.get("liveUrl")
+                        logger.info("Live viewer URL: %s", self._live_url)
+        except Exception:
+            logger.exception("Failed to fetch live viewer URL")
+
+        # Navigate to the requested page
         page = await self._session.get_current_page()
         await page.goto(url)
-        logger.info("Browser started and navigated to %s", url)
-
-    @staticmethod
-    def _build_storage_state(cookies: list[dict]) -> str:
-        """Convert cookie dicts from the Chrome extension into a Playwright
-        storage_state JSON file and return its path."""
-        pw_cookies = []
-        for c in cookies:
-            pw_cookie = {
-                "name": c["name"],
-                "value": c["value"],
-                "domain": c["domain"],
-                "path": c.get("path", "/"),
-                "secure": c.get("secure", False),
-                "httpOnly": c.get("httpOnly", False),
-                "sameSite": c.get("sameSite", "Lax"),
-            }
-            expires = c.get("expires", -1)
-            if expires and expires > 0:
-                pw_cookie["expires"] = expires
-            pw_cookies.append(pw_cookie)
-
-        state = {"cookies": pw_cookies, "origins": []}
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False, prefix="pbu_cookies_"
-        )
-        json.dump(state, tmp)
-        tmp.close()
-        return tmp.name
+        logger.info("Cloud browser started and navigated to %s", url)
 
     async def execute_action(self, instruction: str) -> str:
         """Run a browser-use agent with a natural language instruction.
-        Returns the agent's own description of what happened."""
+
+        The agent is kept alive across calls so it retains full context
+        (page state, action history, conversation) from previous instructions.
+        """
         if self._stopped:
             raise RuntimeError("Browser service has been stopped")
         if not self._session:
             raise RuntimeError("Browser not started")
 
-        agent = Agent(
-            task=instruction,
-            llm=self._llm,
-            browser_session=self._session,
-        )
-        self._agent_task = asyncio.create_task(agent.run())
+        if self._agent is None:
+            # First call — create the agent
+            self._agent = Agent(
+                task=instruction,
+                llm=self._llm,
+                browser_session=self._session,
+            )
+            logger.info("Created persistent agent for first task")
+        else:
+            # Follow-up call — inject new task, keeping message history
+            self._agent.add_new_task(instruction)
+            logger.info("Added follow-up task to persistent agent")
+
+        self._agent_task = asyncio.create_task(self._agent.run())
         try:
             result = await self._agent_task
         except asyncio.CancelledError:
@@ -190,23 +270,32 @@ class BrowserService:
     async def close(self) -> None:
         await self.stop()
         if self._session:
-            # Use stop() to allow StorageStateWatchdog to save cookies
-            # back to the persistent profile before shutdown.
+            logger.info(">>> CLOSING cloud browser session...")
+            try:
+                # Explicitly stop the cloud browser via the API so cookies
+                # are saved to the profile.  BrowserSession.stop() with
+                # keep_alive=True skips the cloud stop_browser() call, so
+                # we must call it ourselves first.
+                cloud_client = self._session._cloud_browser_client
+                session_id = cloud_client.current_session_id if cloud_client else None
+                if session_id:
+                    logger.info(">>> Stopping cloud browser %s to save cookies to profile...", session_id)
+                    # Call the API directly instead of cloud_client.stop_browser()
+                    # because the SDK's CloudBrowserResponse requires non-null
+                    # liveUrl/cdpUrl, but the stop response returns nulls.
+                    api_key = _get_api_key()
+                    async with httpx.AsyncClient(timeout=15.0) as http:
+                        resp = await http.patch(
+                            f"{_BU_API}/browsers/{session_id}",
+                            headers={"X-Browser-Use-API-Key": api_key, "Content-Type": "application/json"},
+                            json={"action": "stop"},
+                        )
+                        resp.raise_for_status()
+                    logger.info(">>> Cloud browser stopped — cookies saved to profile")
+            except Exception as e:
+                logger.warning(">>> Cloud browser stop failed: %s", e)
             try:
                 await self._session.stop()
             except Exception:
-                # Fall back to kill() if graceful stop fails
-                try:
-                    await self._session.kill()
-                except Exception:
-                    pass
-            self._session = None
-            logger.info("Browser closed")
-        # Clean up temp cookie file
-        if self._storage_state_path:
-            import os
-            try:
-                os.unlink(self._storage_state_path)
-            except OSError:
                 pass
-            self._storage_state_path = None
+            self._session = None
